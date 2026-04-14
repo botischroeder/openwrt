@@ -1,0 +1,80 @@
+From: Alexander Vickberg <wickbergster@gmail.com>
+Subject: [PATCH] net: dsa: qca8k: make MAC_PWR_SEL configurable from DT
+
+The qca8k_setup_mac_pwr_sel() function currently uses
+of_machine_is_compatible() to set the MAC_PWR_SEL register, but this
+approach has several problems:
+
+1. Dual-compatible boards carrying both "qcom,ipq8065" and "qcom,ipq8064"
+   in their compatible list (e.g. Netgear R7800/XR500, Zyxel NBG6817)
+   trigger both machine checks, setting both RGMII0 and RGMII1 to 1.8V.
+   No device in the ipq806x family has this as its intended configuration
+   based on pre-DSA swconfig initvals.
+
+2. The ipq8064 fallback sets RGMII0 (bit 19, MAC0) to 1.8V. However the
+   majority of ipq8064 boards require RGMII1 (bit 18, MAC5/6) at 1.8V.
+   Only two boards (r7500v2, onhub) actually match the ipq8064 default.
+   The r7500 and r7500v2 use the same SoC but require opposite settings,
+   which proves no SoC-level default can be correct.
+
+3. ipq8062 boards (e.g. Netgear WG2600HP3) are unhandled entirely since
+   "qcom,ipq8062" matches neither check, leaving their MAC_PWR_SEL at
+   the hardware power-on default.
+
+The correct voltage depends on the board PCB design, not the SoC family.
+Replace the machine-compatible heuristics with two explicit boolean DT
+properties, allowing each board to declare its required voltages directly:
+
+  qca,mac-pwr-sel-rgmii0-1_8v: raise MAC0 interface (bit 19) to 1.8V
+  qca,mac-pwr-sel-rgmii1-1_8v: raise MAC5/6 interface (bit 18) to 1.8V
+
+Absence of a property leaves the corresponding interface at 1.5V (the
+hardware default). The register is always written to ensure a clean state
+regardless of power-on strapping.
+
+The MAC_PWR_SEL register (offset 0x00E4) bit definitions per QCA8337
+datasheet (80-Y0619-3 Rev.D), Table 5-43:
+  bit 19 (PWR_RGMII_0): 0 = 1.5V, 1 = 1.8V for MAC0 RGMII interface
+  bit 18 (PWR_RGMII_1): 0 = 1.5V, 1 = 1.8V for MAC5/6 RGMII interface
+These bits are only effective when using the internal regulator.
+
+Signed-off-by: Alexander Vickberg <wickbergster@gmail.com>
+---
+ drivers/net/dsa/qca/qca8k-8xxx.c | 4 ++--
+ 1 file changed, 5 insertions(+), 17 deletions(-)
+
+--- a/drivers/net/dsa/qca/qca8k-8xxx.c
++++ b/drivers/net/dsa/qca/qca8k-8xxx.c
+@@ -1064,27 +1064,15 @@ static int
+ qca8k_setup_mac_pwr_sel(struct qca8k_priv *priv)
+ {
+ 	u32 mask = 0;
+-	int ret = 0;
+-
+-	/* SoC specific settings for ipq8064.
+-	 * If more device require this consider adding
+-	 * a dedicated binding.
+-	 */
+-	if (of_machine_is_compatible("qcom,ipq8064"))
++	if (device_property_read_bool(priv->dev, "qca,mac-pwr-sel-rgmii0-1_8v"))
+ 		mask |= QCA8K_MAC_PWR_RGMII0_1_8V;
+ 
+-	/* SoC specific settings for ipq8065 */
+-	if (of_machine_is_compatible("qcom,ipq8065"))
++	if (device_property_read_bool(priv->dev, "qca,mac-pwr-sel-rgmii1-1_8v"))
+ 		mask |= QCA8K_MAC_PWR_RGMII1_1_8V;
+ 
+-	if (mask) {
+-		ret = qca8k_rmw(priv, QCA8K_REG_MAC_PWR_SEL,
+-				QCA8K_MAC_PWR_RGMII0_1_8V |
+-				QCA8K_MAC_PWR_RGMII1_1_8V,
+-				mask);
+-	}
+-
+-	return ret;
++	return qca8k_rmw(priv, QCA8K_REG_MAC_PWR_SEL,
++			QCA8K_MAC_PWR_RGMII0_1_8V | QCA8K_MAC_PWR_RGMII1_1_8V,
++			mask);
+ }
+ 
+ static int qca8k_find_cpu_port(struct dsa_switch *ds)

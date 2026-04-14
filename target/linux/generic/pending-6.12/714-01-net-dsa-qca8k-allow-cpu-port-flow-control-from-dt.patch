@@ -1,0 +1,29 @@
+From: Alexander Vickberg <wickbergster@gmail.com>
+Subject: [PATCH] net: dsa: qca8k: do not force flow control on CPU ports
+
+Flow control on CPU ports was unconditionally enabled regardless of
+what was negotiated by phylink or what was specified in the fixed-link
+node. Remove the dsa_is_cpu_port() override and let rx_pause and
+tx_pause from phylink_mac_link_up() exclusively control the flow
+control bits, consistent with how non-CPU ports are handled.
+
+Signed-off-by: Alexander Vickberg <wickbergster@gmail.com>
+---
+ drivers/net/dsa/qca/qca8k-8xxx.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/dsa/qca/qca8k-8xxx.c
++++ b/drivers/net/dsa/qca/qca8k-8xxx.c
+@@ -1474,10 +1474,10 @@ qca8k_phylink_mac_link_up(struct phylink_config *config,
+ 		if (duplex == DUPLEX_FULL)
+ 			reg |= QCA8K_PORT_STATUS_DUPLEX;
+ 
+-		if (rx_pause || dsa_port_is_cpu(dp))
++		if (rx_pause)
+ 			reg |= QCA8K_PORT_STATUS_RXFLOW;
+ 
+-		if (tx_pause || dsa_port_is_cpu(dp))
++		if (tx_pause)
+ 			reg |= QCA8K_PORT_STATUS_TXFLOW;
+ 	}
+ 
